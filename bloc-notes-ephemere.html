@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bloc-notes Éphémère — toujours au-dessus (sans sauvegarde)</title>
+  <style>
+    :root { --radius: 10px; --shadow: 0 10px 30px rgba(0,0,0,.15); --gap: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: #f7f7fb; color: #222; }
+    .wrap { max-width: 840px; margin: 0 auto; }
+    h1 { margin: 0 0 12px; }
+    .card { background: white; border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+    .row { display:flex; flex-wrap:wrap; gap: 10px; align-items:center; }
+    .primary { padding: 12px 16px; border: 0; background: #1a73e8; color: white; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .secondary { padding: 12px 16px; border: 1px solid #ddd; background: #fff; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .pill { display:inline-block; padding: 3px 8px; border-radius: 999px; background:#eef2ff; }
+    .footer { margin-top: 16px; font-size: 12px; opacity: .75; }
+
+    /* Fallback panneau interne */
+    .fallback-panel { position: fixed; right: 16px; bottom: 16px; width: 420px; height: 360px; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: var(--shadow); display: none; flex-direction: column; z-index: 999999; }
+    .fallback-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid #eee; cursor: move; }
+    .fb-meta { display:flex; align-items:center; gap:10px; font-size:12px; opacity:.9; }
+    .fallback-toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-bottom: 1px solid #eee; }
+    .fallback-editor { flex: 1; padding: 10px; overflow: auto; }
+    .btn { padding: 6px 10px; border: 1px solid #ddd; background: #fafafa; border-radius: 6px; cursor: pointer; }
+    .btn:active { transform: translateY(1px); }
+    .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    /* Couleur texte & surlignage */
+    .btn-color { display:inline-flex; align-items:center; gap:8px; }
+    .swatch { width: 12px; height: 12px; border-radius: 999px; display:inline-block; border:1px solid #ccc; }
+
+    /* Palette (popover) pour surligner */
+    .palette {
+      position: absolute;
+      z-index: 9999999;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 8px;
+      display: grid;
+      grid-template-columns: repeat(6, 22px);
+      gap: 6px;
+    }
+    .palette .chip {
+      width: 22px; height: 22px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;
+    }
+    .palette .chip:active { transform: translateY(1px); }
+    .palette .chip.transparent {
+      background: linear-gradient(45deg, #eee 25%, transparent 25%, transparent 50%, #eee 50%, #eee 75%, transparent 75%, transparent);
+      background-size: 8px 8px;
+    }
+    .hidden { display: none !important; }
+    .rel { position: relative; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Bloc-notes Éphémère (sans sauvegarde)</h1>
+    <div class="card">
+      <div class="row">
+        <button id="openPip" class="primary">🪟 Ouvrir la fenêtre flottante</button>
+        <button id="openFallback" class="secondary">🧰 Ouvrir le panneau intégré</button>
+        <span id="supportBadge" class="pill"></span>
+        <button id="purge" class="secondary" title="Supprimer anciennes sauvegardes locales">🧹 Purger anciens enregistrements</button>
+      </div>
+      <div class="footer">
+        Aucune <strong>sauvegarde</strong> du texte n’est faite. L’éditeur démarre <strong>vide et en noir</strong> à chaque ouverture. Si vous aviez une ancienne version qui gardait du texte, utilisez le bouton <em>Purger</em> ci-dessus une fois.
+      </div>
+    </div>
+  </div>
+
+  <!-- Fallback panneau interne -->
+  <div class="fallback-panel" id="fallbackPanel" aria-hidden="true">
+    <div class="fallback-header" id="fallbackHeader">
+      <div class="fb-meta">
+        <strong style="padding-left:6px;">Bloc-notes</strong>
+        <span id="fbClock" class="mono">--:--:--</span>
+        <span id="fbTimer" class="mono">00:00.0</span>
+      </div>
+      <div>
+        <button id="fbStartPause" class="btn">Démarrer</button>
+        <button id="fbReset" class="btn">Réinitialiser</button>
+        <button id="fbClear" class="btn">Effacer</button>
+        <button id="fallbackClose" class="btn" title="Fermer">✕</button>
+      </div>
+    </div>
+    <div class="fallback-toolbar">
+      <button class="btn" data-cmd="bold"><b>Gras</b></button>
+      <button class="btn" data-cmd="italic"><i>Italique</i></button>
+      <button class="btn" data-cmd="underline"><u>Souligné</u></button>
+      <button class="btn" data-cmd="insertUnorderedList">• Liste</button>
+      <button class="btn" data-cmd="insertOrderedList">1. Liste</button>
+      <label class="btn">
+        Taille
+        <select id="fbFontSize">
+          <option value="3">Normal</option>
+          <option value="4">Grand</option>
+          <option value="5">Très grand</option>
+          <option value="6">XXL</option>
+          <option value="7">Max</option>
+        </select>
+      </label>
+
+      <!-- Boutons couleur (texte) -->
+      <div class="btn btn-color" data-color="#000000"><span class="swatch" style="background:#000000"></span>Noir</div>
+      <div class="btn btn-color" data-color="#1a73e8"><span class="swatch" style="background:#1a73e8"></span>Bleu</div>
+      <div class="btn btn-color" data-color="#22863a"><span class="swatch" style="background:#22863a"></span>Vert</div>
+      <div class="btn btn-color" data-color="#d93025"><span class="swatch" style="background:#d93025"></span>Rouge</div>
+
+      <!-- Bouton surligner + conteneur relatif pour positionner la palette -->
+      <div class="rel">
+        <button id="fbHighlightBtn" class="btn">🖍️ Surligner</button>
+      </div>
+    </div>
+    <div id="fallbackEditor" class="fallback-editor" contenteditable="true" spellcheck="false"></div>
+  </div>
+
+  <script>
+    // --- Config ---
+    const SUPPORTS_PIP = 'documentPictureInPicture' in window;
+    const LEGACY_KEYS = [
+      'floating-notepad-content', 'floating-notepad-settings',
+      'floating-notepad-timer', 'floating-notepad-fallback',
+      'floating-notepad-fallback-timer', 'floating-notepad-fallback-color'
+    ];
+
+    // Purge legacy
+    function purgeLegacy() {
+      try { LEGACY_KEYS.forEach(k => localStorage.removeItem(k)); } catch {}
+      alert('Anciennes sauvegardes locales supprimées (si elles existaient).');
+    }
+    document.getElementById('purge').addEventListener('click', purgeLegacy);
+
+    // Badge
+    const badge = document.getElementById('supportBadge');
+    badge.textContent = SUPPORTS_PIP ? '✅ Fenêtre flottante disponible' : 'ℹ️ Fenêtre flottante indisponible (utilisez le panneau intégré)';
+
+    // Nettoyage ancien contenu
+    try { localStorage.removeItem('floating-notepad-content'); localStorage.removeItem('floating-notepad-fallback'); } catch {}
+
+    // Utils
+    const formatClock = d => { const p = n => String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+    const formatMillis = ms => { ms = Math.max(0, ms|0); const deci = Math.floor((ms % 1000) / 100); const s = Math.floor(ms/1000) % 60; const m = Math.floor(ms/60000); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${deci}`; };
+    const execHilite = (doc, color) => {
+      // 'hiliteColor' (standard) puis repli 'backColor' (legacy)
+      if (!doc.execCommand('hiliteColor', false, color)) {
+        try { doc.execCommand('backColor', false, color); } catch {}
+      }
+    };
+
+    // ---- Picture-in-Picture Window (no storage) ----
+    document.getElementById('openPip').addEventListener('click', async () => {
+      if (!SUPPORTS_PIP) return openFallback();
+
+      try {
+        const pipWin = await documentPictureInPicture.requestWindow({ width: 560, height: 480 });
+        const pipDoc = pipWin.document;
+        pipDoc.head.innerHTML = `
+          <meta charset="utf-8" />
+          <title>Bloc-notes</title>
+          <style>
+            :root { --gap: 8px; --radius: 10px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; }
+            body { margin: 0; background: #fff; color:#222; display:flex; flex-direction:column; height:100vh; }
+            .bar { display:flex; align-items:center; gap: var(--gap); padding: 8px; border-bottom:1px solid #eee; }
+            .title { font-weight:600; margin-right:auto; padding-left:4px; }
+            .toolbar { display:flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-bottom:1px solid #eee; align-items:center; }
+            .editor { flex:1; padding: 10px; overflow:auto; outline: none; }
+            .btn { padding: 6px 10px; border: 1px solid #ddd; background: #fafafa; border-radius: 6px; cursor: pointer; }
+            .btn:active { transform: translateY(1px); }
+            .meta { display:flex; align-items:center; gap:10px; font-size:12px; opacity:.9; }
+            .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+            .btn-color { display:inline-flex; align-items:center; gap:8px; }
+            .swatch { width: 12px; height: 12px; border-radius: 999px; display:inline-block; border:1px solid #ccc; }
+            .palette {
+              position: absolute; z-index: 9999999; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.15);
+              padding: 8px; display: grid; grid-template-columns: repeat(6, 22px); gap: 6px;
+            }
+            .palette .chip { width: 22px; height: 22px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; }
+            .palette .chip:active { transform: translateY(1px); }
+            .palette .chip.transparent {
+              background: linear-gradient(45deg,#eee 25%,transparent 25%,transparent 50%,#eee 50%,#eee 75%,transparent 75%,transparent);
+              background-size: 8px 8px;
+            }
+            .hidden { display:none !important; }
+            .rel { position: relative; }
+          </style>
+        `;
+        pipDoc.body.innerHTML = `
+          <div class="bar">
+            <div class="title">Bloc-notes</div>
+            <div class="meta">
+              <span id="clock" class="mono">--:--:--</span>
+              <span id="timer" class="mono">00:00.0</span>
+              <button id="startPause" class="btn">Démarrer</button>
+              <button id="reset" class="btn">Réinitialiser</button>
+            </div>
+            <div style="margin-left:auto; display:flex; gap:6px;">
+              <button id="clear" class="btn" title="Effacer tout">Effacer</button>
+              <button id="close" class="btn" title="Fermer">Fermer</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <button class="btn" data-cmd="bold"><b>Gras</b></button>
+            <button class="btn" data-cmd="italic"><i>Italique</i></button>
+            <button class="btn" data-cmd="underline"><u>Souligné</u></button>
+            <button class="btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button class="btn" data-cmd="insertOrderedList">1. Liste</button>
+            <label class="btn">Taille
+              <select id="fontSize">
+                <option value="3">Normal</option>
+                <option value="4">Grand</option>
+                <option value="5">Très grand</option>
+                <option value="6">XXL</option>
+                <option value="7">Max</option>
+              </select>
+            </label>
+            <div class="btn btn-color" data-color="#000000"><span class="swatch" style="background:#000000"></span>Noir</div>
+            <div class="btn btn-color" data-color="#1a73e8"><span class="swatch" style="background:#1a73e8"></span>Bleu</div>
+            <div class="btn btn-color" data-color="#22863a"><span class="swatch" style="background:#22863a"></span>Vert</div>
+            <div class="btn btn-color" data-color="#d93025"><span class="swatch" style="background:#d93025"></span>Rouge</div>
+
+            <!-- Bouton Surligner -->
+            <div class="rel"><button id="hlBtn" class="btn">🖍️ Surligner</button></div>
+          </div>
+          <div id="editor" class="editor" contenteditable="true" spellcheck="false"></div>
+        `;
+
+        const editor = pipDoc.getElementById('editor');
+
+        // Démarrer vide + noir + CSS inline
+        try { pipDoc.execCommand('styleWithCSS', true); } catch {}
+        pipDoc.execCommand('foreColor', false, '#000000');
+        editor.innerHTML = '';
+
+        // Conserver la sélection (mousedown)
+        pipDoc.querySelectorAll('[data-cmd]').forEach(btn => {
+          btn.addEventListener('mousedown', (e) => { e.preventDefault(); pipDoc.execCommand(btn.getAttribute('data-cmd'), false, null); editor.focus(); });
+        });
+        pipDoc.getElementById('fontSize').addEventListener('change', (e) => { pipDoc.execCommand('fontSize', false, e.target.value); editor.focus(); });
+        pipDoc.querySelectorAll('.btn-color').forEach(btn => {
+          btn.addEventListener('mousedown', (e) => { e.preventDefault(); pipDoc.execCommand('foreColor', false, btn.getAttribute('data-color')); editor.focus(); });
+        });
+
+        // Palette Surligner
+        makePalette(pipDoc, pipDoc.getElementById('hlBtn'), (color) => {
+          execHilite(pipDoc, color);
+          editor.focus();
+        });
+
+        // Horloge
+        const clockEl = pipDoc.getElementById('clock');
+        const tickClock = () => (clockEl.textContent = formatClock(new Date()));
+        tickClock();
+        const clockInterval = pipWin.setInterval(tickClock, 1000);
+
+        // Chrono
+        const timerEl = pipDoc.getElementById('timer');
+        const startPauseBtn = pipDoc.getElementById('startPause');
+        const resetBtn = pipDoc.getElementById('reset');
+        let running = false, base = 0, startedAt = 0, rafId;
+        const now = () => Date.now();
+        const elapsed = () => running ? base + (now() - startedAt) : base;
+        const render = () => timerEl.textContent = formatMillis(elapsed());
+        const tick = () => { render(); rafId = pipWin.requestAnimationFrame(tick); };
+        function start(){ if (running) return; running = true; startedAt = now(); startPauseBtn.textContent='Pause'; tick(); }
+        function pause(){ if (!running) return; base = elapsed(); running = false; startPauseBtn.textContent='Reprendre'; if (rafId) pipWin.cancelAnimationFrame(rafId); render(); }
+        function reset(){ running=false; base=0; startedAt=0; startPauseBtn.textContent='Démarrer'; if (rafId) pipWin.cancelAnimationFrame(rafId); render(); }
+        startPauseBtn.addEventListener('click', () => (running ? pause() : start()));
+        resetBtn.addEventListener('click', reset);
+        render();
+
+        pipDoc.getElementById('clear').addEventListener('click', () => { editor.innerHTML = ''; editor.focus(); });
+        pipDoc.getElementById('close').addEventListener('click', () => pipWin.close());
+
+        // Nettoyage
+        pipWin.addEventListener('beforeunload', () => {
+          pipWin.clearInterval(clockInterval);
+          if (rafId) pipWin.cancelAnimationFrame(rafId);
+        });
+      } catch (e) {
+        console.error(e);
+        openFallback();
+      }
+    });
+
+    // ---- Panneau intégré (no storage) ----
+    const fbPanel = document.getElementById('fallbackPanel');
+    const fbHeader = document.getElementById('fallbackHeader');
+    const fbClose = document.getElementById('fallbackClose');
+    const fbEditor = document.getElementById('fallbackEditor');
+    const fbFontSize = document.getElementById('fbFontSize');
+    const fbClock = document.getElementById('fbClock');
+    const fbTimerEl = document.getElementById('fbTimer');
+    const fbStartPause = document.getElementById('fbStartPause');
+    const fbReset = document.getElementById('fbReset');
+    const fbClear = document.getElementById('fbClear');
+
+    function openFallback() {
+      fbPanel.style.display = 'flex';
+      fbPanel.setAttribute('aria-hidden', 'false');
+      try { document.execCommand('styleWithCSS', true); } catch {}
+      document.execCommand('foreColor', false, '#000000');
+      fbEditor.innerHTML = '';
+      if (!fbClock._clockInterval) {
+        fbClock.textContent = formatClock(new Date());
+        fbClock._clockInterval = setInterval(() => fbClock.textContent = formatClock(new Date()), 1000);
+      }
+      fbInitTimer();
+
+      // Construire la palette du fallback si pas encore fait
+      if (!openFallback._paletteInit) {
+        const btn = document.getElementById('fbHighlightBtn');
+        makePalette(document, btn, (color) => { execHilite(document, color); fbEditor.focus(); });
+        openFallback._paletteInit = true;
+      }
+    }
+    document.getElementById('openFallback').addEventListener('click', openFallback);
+    fbClose.addEventListener('click', () => {
+      fbPanel.style.display = 'none';
+      fbPanel.setAttribute('aria-hidden', 'true');
+    });
+
+    // Drag
+    (function makeDraggable(panel, handle) {
+      let startX=0, startY=0, origX=0, origY=0, dragging=false;
+      handle.addEventListener('mousedown', (e) => {
+        dragging = true;
+        startX = e.clientX; startY = e.clientY;
+        const rect = panel.getBoundingClientRect();
+        origX = rect.left; origY = rect.top;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        e.preventDefault();
+      });
+      function onMove(e) {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        panel.style.left = (origX + dx) + 'px';
+        panel.style.top = (origY + dy) + 'px';
+        panel.style.right = 'auto'; panel.style.bottom = 'auto';
+        panel.style.position = 'fixed';
+      }
+      function onUp() {
+        dragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    })(fbPanel, fbHeader);
+
+    // Toolbar – conserver la sélection (mousedown)
+    document.querySelectorAll('.fallback-toolbar [data-cmd]').forEach(btn => {
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        document.execCommand(btn.getAttribute('data-cmd'), false, null);
+        fbEditor.focus();
+      });
+    });
+    fbFontSize.addEventListener('change', (e) => {
+      document.execCommand('fontSize', false, e.target.value);
+      fbEditor.focus();
+    });
+    document.querySelectorAll('.fallback-toolbar .btn-color').forEach(btn => {
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        document.execCommand('foreColor', false, btn.getAttribute('data-color'));
+        fbEditor.focus();
+      });
+    });
+
+    fbClear.addEventListener('click', () => { fbEditor.innerHTML = ''; fbEditor.focus(); });
+
+    // Timer (non persistant)
+    function fbInitTimer() {
+      let running = false, base = 0, startedAt = 0;
+      function fbElapsed() { return running ? base + (Date.now() - startedAt) : base; }
+      function fbRender() { fbTimerEl.textContent = formatMillis(fbElapsed()); }
+      let interval = null;
+      function start() {
+        if (running) return;
+        running = true; startedAt = Date.now();
+        fbStartPause.textContent = 'Pause';
+        if (!interval) interval = setInterval(fbRender, 100);
+      }
+      function pause() {
+        if (!running) return;
+        base = fbElapsed(); running = false;
+        fbStartPause.textContent = 'Reprendre';
+        clearInterval(interval); interval = null; fbRender();
+      }
+      function reset() {
+        running = false; base = 0; startedAt = 0;
+        fbStartPause.textContent = 'Démarrer';
+        clearInterval(interval); interval = null; fbRender();
+      }
+      fbStartPause.onclick = () => (running ? pause() : start());
+      fbReset.onclick = reset;
+      fbRender();
+    }
+
+    // ----- Palette générique (pour pipDoc et document) -----
+    function makePalette(doc, anchorBtn, onPick) {
+      // Palette de couleurs
+      const colors = [
+        '#ffff00','#fff2ac','#ffd5a8','#ffc0cb','#fca5a5','#fdba74',
+        '#a7f3d0','#bbf7d0','#93c5fd','#bfdbfe','#e9d5ff','#d8b4fe',
+        '#ffffff','#000000'
+      ];
+      const labels = {
+        '#ffff00':'Jaune', '#fff2ac':'Pastel', '#ffd5a8':'Pêche', '#ffc0cb':'Rose',
+        '#fca5a5':'Rouge clair', '#fdba74':'Orange', '#a7f3d0':'Menthe',
+        '#bbf7d0':'Vert pâle', '#93c5fd':'Bleu clair', '#bfdbfe':'Bleu pâle',
+        '#e9d5ff':'Lavande', '#d8b4fe':'Violet', '#ffffff':'Blanc', '#000000':'Noir'
+      };
+
+      // Création conteneur palette
+      const palette = doc.createElement('div');
+      palette.className = 'palette hidden';
+      colors.forEach(c => {
+        const chip = doc.createElement('button');
+        chip.className = 'chip';
+        chip.title = labels[c] || c;
+        chip.style.background = c;
+        chip.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          onPick(c);
+          hide();
+        });
+        palette.appendChild(chip);
+      });
+      // puce "transparent" pour annuler le surlignage
+      const transparentChip = doc.createElement('button');
+      transparentChip.className = 'chip transparent';
+      transparentChip.title = 'Effacer le surlignage';
+      transparentChip.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        onPick('transparent');
+        hide();
+      });
+      palette.appendChild(transparentChip);
+
+      doc.body.appendChild(palette);
+
+      function show() {
+        const r = anchorBtn.getBoundingClientRect();
+        palette.style.left = (r.left + (doc.defaultView?.screenX ?? 0)) + 'px';
+        palette.style.top  = (r.bottom + 6 + (doc.defaultView?.screenY ?? 0)) + 'px';
+        palette.classList.remove('hidden');
+      }
+      function hide(){ palette.classList.add('hidden'); }
+      function toggle(){ palette.classList.toggle('hidden'); }
+
+      // Ouverture via bouton (garder la sélection)
+      anchorBtn.addEventListener('mousedown', (e) => { e.preventDefault(); toggle(); });
+
+      // Cliquez dehors / Échap -> fermer
+      doc.addEventListener('mousedown', (e) => { if (!palette.contains(e.target) && e.target !== anchorBtn) hide(); });
+      doc.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+
+      return { show, hide, toggle };
+    }
+  </script>
+</body>
+</html>
